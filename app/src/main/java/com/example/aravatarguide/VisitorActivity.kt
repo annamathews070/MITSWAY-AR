@@ -42,9 +42,9 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
     private lateinit var tvAvailableLocations: TextView
 
     private var installRequested = false
-    private val waypoints = mutableListOf<Waypoint>()
-    private var currentDestination: Waypoint? = null
-    private var pathToFollow = listOf<Waypoint>()
+    private var floorGraph: FloorGraph? = null
+    private var pathFinder: ShortestPathFinder? = null
+    private var currentPath: PathResult? = null
     private var currentWaypointIndex = 0
 
     private var renderer: SimpleRenderer? = null
@@ -57,31 +57,40 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
     private var isTtsReady = false
     private var hasAskedInitialQuestion = false
     private var isNavigating = false
-    private var hasAnnouncedFollowPath = false
+    private var isPositionRecognized = false
 
     private var arrowModel: ModelLoader? = null
-    private var avatarModel: ModelLoader? = null
+    private var avatarRenderer: AvatarRenderer? = null
 
-    private val destinationColor = floatArrayOf(1.0f, 0.0f, 0.0f, 1.0f)
+    private var pendingDestination: String? = null
+    private var userCurrentPosition: FloatArray? = null
+
     private val pathColor = floatArrayOf(0.0f, 1.0f, 0.0f, 1.0f)
+    private val namedWaypointColor = floatArrayOf(1.0f, 0.84f, 0.0f, 1.0f)
+    private val destinationColor = floatArrayOf(1.0f, 0.0f, 0.0f, 1.0f)
 
     companion object {
         private const val PERMISSION_CODE = 100
         private const val WAYPOINT_REACHED_DISTANCE = 0.8f
+        private const val POSITION_RECOGNITION_DISTANCE = 10.0f // Increased from 5.0f
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_visitor)
 
-        surfaceView = findViewById(R.id.surfaceView)
-        tvStatus = findViewById(R.id.tvStatus)
-        tvDestination = findViewById(R.id.tvDestination)
-        tvDirection = findViewById(R.id.tvDirection)
-        tvAvatarStatus = findViewById(R.id.tvAvatarStatus)
-        tvSpeechInput = findViewById(R.id.tvSpeechInput)
-        btnMicrophone = findViewById(R.id.btnMicrophone)
-        tvAvailableLocations = findViewById(R.id.tvAvailableLocations)
+        // Set content view using resource identifier
+        val layoutId = resources.getIdentifier("activity_visitor", "layout", packageName)
+        setContentView(layoutId)
+
+        // Find views using resource identifiers
+        surfaceView = findViewById(resources.getIdentifier("surfaceView", "id", packageName))
+        tvStatus = findViewById(resources.getIdentifier("tvStatus", "id", packageName))
+        tvDestination = findViewById(resources.getIdentifier("tvDestination", "id", packageName))
+        tvDirection = findViewById(resources.getIdentifier("tvDirection", "id", packageName))
+        tvAvatarStatus = findViewById(resources.getIdentifier("tvAvatarStatus", "id", packageName))
+        tvSpeechInput = findViewById(resources.getIdentifier("tvSpeechInput", "id", packageName))
+        btnMicrophone = findViewById(resources.getIdentifier("btnMicrophone", "id", packageName))
+        tvAvailableLocations = findViewById(resources.getIdentifier("tvAvailableLocations", "id", packageName))
 
         surfaceView.preserveEGLContextOnPause = true
         surfaceView.setEGLContextClientVersion(2)
@@ -92,21 +101,22 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
         btnMicrophone.setOnClickListener { toggleSpeechRecognition() }
 
         textToSpeech = TextToSpeech(this, this)
-        loadWaypoints()
+        loadFloorGraph()
         checkPermissions()
     }
 
-    private fun loadWaypoints() {
+    private fun loadFloorGraph() {
         val pathManager = PathManager(this)
-        waypoints.clear()
-        waypoints.addAll(pathManager.loadPath())
+        floorGraph = pathManager.loadFloorGraph()
 
-        if (waypoints.isEmpty()) {
-            tvAvailableLocations.text = "⚠ No paths mapped. Use Host mode first."
+        if (floorGraph == null || floorGraph!!.isEmpty()) {
+            tvAvailableLocations.text = "⚠️ No floor map found. Use Host mode first."
             tvSpeechInput.text = "No destinations available"
             btnMicrophone.isEnabled = false
+            Toast.makeText(this, "No floor map found. Please map the floor first in Host mode.", Toast.LENGTH_LONG).show()
         } else {
-            val destinations = waypoints.filter { it.isEndPoint }.map { it.name }.distinct()
+            pathFinder = ShortestPathFinder(floorGraph!!)
+            val destinations = floorGraph!!.getNamedWaypoints().map { it.name }
             tvAvailableLocations.text = "Available: ${destinations.joinToString(", ")}"
         }
     }
@@ -142,7 +152,7 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
                 isListening = true
                 runOnUiThread {
                     tvSpeechInput.text = "🎤 Listening..."
-                    btnMicrophone.text = "⏺"
+                    btnMicrophone.text = "⏸"
                 }
             }
             override fun onBeginningOfSpeech() {}
@@ -176,8 +186,13 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
             return
         }
 
-        if (waypoints.isEmpty()) {
-            Toast.makeText(this, "No locations available. Use Host mode first.", Toast.LENGTH_LONG).show()
+        if (floorGraph == null || floorGraph!!.isEmpty()) {
+            Toast.makeText(this, "No floor map available. Use Host mode first.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (!isPositionRecognized) {
+            Toast.makeText(this, "Please wait while we recognize your position...", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -200,28 +215,147 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
             tvSpeechInput.text = "You said: \"$command\""
         }
 
-        val matchedDestination = waypoints.filter { it.isEndPoint }.find { waypoint ->
-            command.contains(waypoint.name, ignoreCase = true)
+        val graph = floorGraph ?: return
+
+        val matchedWaypoint = graph.getNamedWaypoints().find { waypoint ->
+            command.contains(waypoint.name, ignoreCase = true) ||
+                    waypoint.name.contains(command, ignoreCase = true)
         }
 
-        if (matchedDestination != null) {
-            currentDestination = matchedDestination
-            currentWaypointIndex = 0
-            isNavigating = true
-            hasAnnouncedFollowPath = false
-
-            runOnUiThread {
-                tvDestination.text = "→ ${matchedDestination.name}"
-                tvDestination.visibility = TextView.VISIBLE
-                tvDirection.visibility = TextView.VISIBLE
-                tvAvatarStatus.text = "🧭 Navigating..."
-                tvAvatarStatus.visibility = TextView.VISIBLE
-            }
+        if (matchedWaypoint != null) {
+            startNavigation(matchedWaypoint.name)
         } else {
-            val destinations = waypoints.filter { it.isEndPoint }.map { it.name }.distinct()
+            val destinations = graph.getNamedWaypoints().map { it.name }
             speak("I couldn't find that location. Available destinations are: ${destinations.joinToString(", ")}")
             runOnUiThread {
                 tvSpeechInput.text = "Try saying: ${destinations.joinToString(" or ")}"
+            }
+        }
+    }
+
+    private fun startNavigation(destinationName: String) {
+        pendingDestination = destinationName
+        runOnUiThread {
+            tvSpeechInput.text = "Finding path to $destinationName..."
+        }
+    }
+
+    private fun processPendingNavigation() {
+        val destName = pendingDestination ?: return
+        val currentPos = userCurrentPosition ?: return
+        val graph = floorGraph ?: return
+        val finder = pathFinder ?: return
+
+        try {
+            val pathResult = finder.findPathToDestination(currentPos, destName)
+
+            if (pathResult != null) {
+                currentPath = pathResult
+                currentWaypointIndex = 0
+                isNavigating = true
+
+                runOnUiThread {
+                    tvDestination.text = "→ $destName"
+                    tvDestination.visibility = TextView.VISIBLE
+                    tvDirection.visibility = TextView.VISIBLE
+                    tvAvatarStatus.text = "🧭 Navigating..."
+                    tvAvatarStatus.visibility = TextView.VISIBLE
+                }
+
+                speak("Starting navigation to $destName. Total distance is ${pathResult.totalDistance.toInt()} meters. Follow the arrows.")
+            } else {
+                speak("Sorry, I couldn't find a path to $destName")
+                runOnUiThread {
+                    Toast.makeText(this, "No path found to $destName", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            speak("Error starting navigation")
+            runOnUiThread {
+                Toast.makeText(this, "Navigation error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        pendingDestination = null
+    }
+
+    private fun recognizeUserPosition(currentPosition: FloatArray) {
+        if (isPositionRecognized) return
+
+        val graph = floorGraph ?: return
+
+        // Find the nearest node (any waypoint on the path)
+        val nearestNode = graph.findNearestNode(currentPosition)
+
+        if (nearestNode != null) {
+            val distance = graph.calculateDistance(currentPosition, nearestNode.position)
+
+            // Recognize within 10 meters of any waypoint
+            if (distance < 10.0f) {
+                isPositionRecognized = true
+                btnMicrophone.isEnabled = true
+
+                // Find the ACTUAL closest named waypoint
+                val allNamedWaypoints = graph.getNamedWaypoints()
+                var closestNamedWaypoint: GraphNode? = null
+                var minDistance = Float.MAX_VALUE
+
+                for (namedWaypoint in allNamedWaypoints) {
+                    val dist = graph.calculateDistance(currentPosition, namedWaypoint.position)
+                    if (dist < minDistance) {
+                        minDistance = dist
+                        closestNamedWaypoint = namedWaypoint
+                    }
+                }
+
+                val locationName = closestNamedWaypoint?.name ?: "the mapped area"
+
+                runOnUiThread {
+                    tvStatus.text = "Position recognized near $locationName"
+                    tvAvatarStatus.text = "👋 Ready to guide you!"
+                    tvAvatarStatus.visibility = TextView.VISIBLE
+                }
+
+                if (isTtsReady && !hasAskedInitialQuestion) {
+                    hasAskedInitialQuestion = true
+                    val destinations = allNamedWaypoints.map { it.name }
+
+                    speak("Hello! You are near $locationName. Where would you like to go? Available destinations are: ${destinations.joinToString(", ")}")
+                }
+            }
+        }
+    }
+
+    private fun updateNavigation(currentPosition: FloatArray) {
+        val path = currentPath ?: return
+        if (!isNavigating || currentWaypointIndex >= path.nodes.size) return
+
+        val graph = floorGraph ?: return
+        val targetNode = path.nodes[currentWaypointIndex]
+        val distance = graph.calculateDistance(currentPosition, targetNode.position)
+
+        runOnUiThread {
+            tvDirection.text = String.format("%.1f", distance) + "m to next waypoint"
+        }
+
+        if (distance < WAYPOINT_REACHED_DISTANCE) {
+            currentWaypointIndex++
+
+            if (currentWaypointIndex >= path.nodes.size) {
+                isNavigating = false
+                speak("You have reached your destination")
+                runOnUiThread {
+                    tvAvatarStatus.text = "✅ Destination Arrived!"
+                    tvDirection.text = "You have arrived!"
+                }
+                currentPath = null
+                currentWaypointIndex = 0
+            } else {
+                val nextNode = path.nodes[currentWaypointIndex]
+                if (nextNode.isNamedWaypoint) {
+                    speak("Approaching ${nextNode.name}")
+                }
             }
         }
     }
@@ -300,9 +434,8 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
         arrowModel?.loadModel("arrow.glb")
         arrowModel?.createOnGlThread()
 
-        avatarModel = ModelLoader(this)
-        avatarModel?.loadModel("avatar.glb")
-        avatarModel?.createOnGlThread()
+        avatarRenderer = AvatarRenderer()
+        avatarRenderer?.createOnGlThread()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -314,6 +447,7 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
 
         val session = arSession ?: return
+        val graph = floorGraph ?: return
 
         try {
             session.setCameraTextureName(backgroundRenderer?.getTextureId() ?: 0)
@@ -329,144 +463,109 @@ class VisitorActivity : AppCompatActivity(), GLSurfaceView.Renderer, TextToSpeec
                 return
             }
 
-            runOnUiThread {
-                tvStatus.text = "AR Guide Active"
-            }
-
             val viewMatrix = FloatArray(16)
             val projectionMatrix = FloatArray(16)
             camera.getViewMatrix(viewMatrix, 0)
             camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 100f)
 
-            val cameraPos = camera.pose.translation
+            val cameraPos = floatArrayOf(
+                camera.pose.tx(),
+                camera.pose.ty(),
+                camera.pose.tz()
+            )
+
+            userCurrentPosition = cameraPos
             val cameraPose = camera.pose
 
-            // Ask initial question once
-            if (!hasAskedInitialQuestion && isTtsReady && waypoints.isNotEmpty()) {
-                hasAskedInitialQuestion = true
-                val destinations = waypoints.filter { it.isEndPoint }.map { it.name }.distinct()
-                speak("Hello! Where would you like to go? Available destinations are: ${destinations.joinToString(", ")}")
-                runOnUiThread {
-                    tvAvatarStatus.text = "👋 Avatar Guide"
-                    tvAvatarStatus.visibility = TextView.VISIBLE
-                }
+            if (!isPositionRecognized) {
+                recognizeUserPosition(cameraPos)
             }
 
-            // Calculate avatar position (2 meters in front of camera)
+            if (pendingDestination != null) {
+                processPendingNavigation()
+            }
+
+            val shouldShowAvatar = if (isNavigating && currentPath != null) {
+                currentWaypointIndex >= currentPath!!.nodes.size - 1
+            } else {
+                true
+            }
+
             val forward = cameraPose.zAxis
             val avatarX = cameraPos[0] - forward[0] * 2.0f
             val avatarY = cameraPos[1] - 1.3f
             val avatarZ = cameraPos[2] - forward[2] * 2.0f
 
-            // Draw 3D avatar
-            if (avatarModel != null) {
-                val avatarModelMatrix = FloatArray(16)
-                Matrix.setIdentityM(avatarModelMatrix, 0)
-                Matrix.translateM(avatarModelMatrix, 0, avatarX, avatarY, avatarZ)
-                Matrix.scaleM(avatarModelMatrix, 0, 0.5f, 0.5f, 0.5f)
-
-                val avatarMvp = FloatArray(16)
-                val tempMatrix = FloatArray(16)
-                Matrix.multiplyMM(tempMatrix, 0, viewMatrix, 0, avatarModelMatrix, 0)
-                Matrix.multiplyMM(avatarMvp, 0, projectionMatrix, 0, tempMatrix, 0)
-
-                val avatarColor = floatArrayOf(0.2f, 0.6f, 1.0f, 1.0f)
-                avatarModel?.draw(avatarMvp, avatarColor)
+            if (shouldShowAvatar && avatarRenderer != null) {
+                avatarRenderer?.draw(viewMatrix, projectionMatrix, avatarX, avatarY, avatarZ)
             }
 
-            // Navigation logic
-            if (isNavigating && currentDestination != null) {
-                val dest = currentDestination!!
+            if (isNavigating && currentPath != null) {
+                val path = currentPath!!
 
-                // Build path on first frame
-                if (pathToFollow.isEmpty()) {
-                    val userNearestWaypoint = waypoints.minByOrNull { waypoint ->
-                        val dx = waypoint.x - cameraPos[0]
-                        val dz = waypoint.z - cameraPos[2]
-                        sqrt(dx * dx + dz * dz)
-                    }
-                    pathToFollow = buildPathToDestination(userNearestWaypoint, dest)
+                arrowModel?.let { arrow ->
+                    var lastArrowPosition: FloatArray? = null
+                    val minArrowDistance = 1.0f
 
-                    if (pathToFollow.isNotEmpty() && !hasAnnouncedFollowPath) {
-                        speak("Follow the path")
-                        hasAnnouncedFollowPath = true
-                    }
-                }
+                    for (i in 0 until path.nodes.size - 1) {
+                        val currentNode = path.nodes[i]
+                        val nextNode = path.nodes[i + 1]
 
-                // Draw path as GREEN CIRCLES
-                renderer?.let { r ->
-                    pathToFollow.forEach { waypoint ->
-                        val color = if (waypoint == dest) destinationColor else pathColor
-                        r.draw(viewMatrix, projectionMatrix, waypoint.x, waypoint.y, waypoint.z, color)
-                    }
-                }
+                        val shouldDrawArrow = if (lastArrowPosition == null) {
+                            true
+                        } else {
+                            val distFromLast = graph.calculateDistance(lastArrowPosition, currentNode.position)
+                            distFromLast >= minArrowDistance
+                        }
 
-                if (pathToFollow.isNotEmpty() && currentWaypointIndex < pathToFollow.size) {
-                    val nextWaypoint = pathToFollow[currentWaypointIndex]
+                        val isNamedWaypoint = currentNode.isNamedWaypoint
 
-                    val dx = nextWaypoint.x - cameraPos[0]
-                    val dz = nextWaypoint.z - cameraPos[2]
-                    val distanceToNext = sqrt(dx * dx + dz * dz)
+                        if (shouldDrawArrow || isNamedWaypoint) {
+                            val dx = nextNode.position[0] - currentNode.position[0]
+                            val dz = nextNode.position[2] - currentNode.position[2]
+                            val distance = sqrt(dx * dx + dz * dz)
 
-                    if (distanceToNext < WAYPOINT_REACHED_DISTANCE) {
-                        currentWaypointIndex++
+                            if (distance > 0.01f) {
+                                val angleY = Math.toDegrees(atan2(dx.toDouble(), dz.toDouble())).toFloat()
 
-                        if (currentWaypointIndex >= pathToFollow.size) {
-                            isNavigating = false
-                            speak("Destination arrived")
+                                val arrowX = currentNode.position[0]
+                                val arrowY = currentNode.position[1] + 0.15f
+                                val arrowZ = currentNode.position[2]
 
-                            runOnUiThread {
-                                tvAvatarStatus.text = "✅ Destination Arrived!"
-                                tvDirection.text = "You have reached ${dest.name}"
+                                val arrowModelMatrix = FloatArray(16)
+                                Matrix.setIdentityM(arrowModelMatrix, 0)
+                                Matrix.translateM(arrowModelMatrix, 0, arrowX, arrowY, arrowZ)
+                                Matrix.rotateM(arrowModelMatrix, 0, angleY, 0f, 1f, 0f)
+                                Matrix.scaleM(arrowModelMatrix, 0, 0.4f, 0.4f, 0.4f)
+
+                                val arrowMvp = FloatArray(16)
+                                val tempMatrix = FloatArray(16)
+                                Matrix.multiplyMM(tempMatrix, 0, viewMatrix, 0, arrowModelMatrix, 0)
+                                Matrix.multiplyMM(arrowMvp, 0, projectionMatrix, 0, tempMatrix, 0)
+
+                                val arrowColor = when {
+                                    i >= path.nodes.size - 3 -> floatArrayOf(1.0f, 0.0f, 0.0f, 1.0f)
+                                    isNamedWaypoint -> floatArrayOf(1.0f, 0.84f, 0.0f, 1.0f)
+                                    else -> floatArrayOf(0.2f, 0.6f, 1.0f, 1.0f)
+                                }
+
+                                arrow.draw(arrowMvp, arrowColor)
+                                lastArrowPosition = currentNode.position
                             }
-
-                            currentDestination = null
-                            pathToFollow = emptyList()
-                            currentWaypointIndex = 0
-                            hasAnnouncedFollowPath = false
-                            return
                         }
                     }
 
-                    val angleToTarget = Math.toDegrees(atan2(dx.toDouble(), dz.toDouble())).toFloat()
-
-                    runOnUiThread {
-                        tvDirection.text = String.format("%.1f", distanceToNext) + "m to next point"
-                    }
-
-                    // Draw arrow
-                    if (arrowModel != null && distanceToNext > 0.5f) {
-                        val arrowDistance = 1.5f
-                        val normalizedDx = dx / distanceToNext
-                        val normalizedDz = dz / distanceToNext
-
-                        val arrowX = cameraPos[0] + normalizedDx * arrowDistance
-                        val arrowY = cameraPos[1] - 1.4f
-                        val arrowZ = cameraPos[2] + normalizedDz * arrowDistance
-
-                        val arrowPosition = floatArrayOf(arrowX, arrowY, arrowZ)
-                        val arrowMvp = navigationHelper.createArrowMatrix(arrowPosition, angleToTarget, viewMatrix, projectionMatrix)
-                        val arrowColor = floatArrayOf(1.0f, 0.84f, 0.0f, 1.0f)
-                        arrowModel?.draw(arrowMvp, arrowColor)
+                    renderer?.let { r ->
+                        val destNode = path.nodes.last()
+                        r.draw(viewMatrix, projectionMatrix, destNode.position[0], destNode.position[1], destNode.position[2], destinationColor)
                     }
                 }
+
+                updateNavigation(cameraPos)
             }
 
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-    }
-
-    private fun buildPathToDestination(start: Waypoint?, destination: Waypoint?): List<Waypoint> {
-        if (start == null || destination == null) return emptyList()
-
-        val startIndex = start.pathIndex
-        val destIndex = destination.pathIndex
-
-        return if (startIndex <= destIndex) {
-            waypoints.filter { it.pathIndex in startIndex..destIndex }.sortedBy { it.pathIndex }
-        } else {
-            waypoints.filter { it.pathIndex in destIndex..startIndex }.sortedByDescending { it.pathIndex }
         }
     }
 }
