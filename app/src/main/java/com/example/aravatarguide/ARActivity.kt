@@ -7,9 +7,11 @@ import android.content.pm.PackageManager
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -19,10 +21,13 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
-import com.google.ar.core.Frame
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.CameraNotAvailableException
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
@@ -38,6 +43,7 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private lateinit var btnStartRecording: Button
     private lateinit var btnMarkWaypoint: Button
     private lateinit var btnStopRecording: Button
+    private lateinit var btnEmergency: Button
     private lateinit var layoutStartPoint: LinearLayout
 
     private var installRequested = false
@@ -45,17 +51,27 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private var backgroundRenderer: BackgroundRenderer? = null
     private val pathRecorder = PathRecorder()
     private var pendingWaypointName: String? = null
+    private var isEmergencyExit: Boolean = false
 
     private val waypointColor = floatArrayOf(0.0f, 1.0f, 0.0f, 1.0f) // Green
     private val namedWaypointColor = floatArrayOf(1.0f, 0.84f, 0.0f, 1.0f) // Gold
+    private val emergencyExitColor = floatArrayOf(1.0f, 0.0f, 0.0f, 1.0f) // Red
+
+    private lateinit var database: FirebaseDatabase
+    private lateinit var firebasePathManager: FirebasePathManager
+    private var isEmergencyActive = false
 
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
+        private const val TAG = "ARActivity"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_aractivity)
+
+        database = FirebaseDatabase.getInstance()
+        firebasePathManager = FirebasePathManager()
 
         // Initialize views
         surfaceView = findViewById(R.id.surfaceView)
@@ -67,6 +83,7 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         btnStartRecording = findViewById(R.id.btnStartRecording)
         btnMarkWaypoint = findViewById(R.id.btnMarkWaypoint)
         btnStopRecording = findViewById(R.id.btnStopRecording)
+        btnEmergency = findViewById(R.id.btnEmergency)
         layoutStartPoint = findViewById(R.id.layoutStartPoint)
 
         // Setup OpenGL
@@ -80,6 +97,7 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         btnStartRecording.setOnClickListener { startRecording() }
         btnMarkWaypoint.setOnClickListener { showNameWaypointDialog() }
         btnStopRecording.setOnClickListener { stopRecording() }
+        btnEmergency.setOnClickListener { toggleEmergency() }
 
         // Initially hide these buttons
         btnMarkWaypoint.visibility = View.GONE
@@ -87,6 +105,38 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
         if (!hasCameraPermission()) {
             requestCameraPermission()
+        }
+
+        listenAndSetEmergencyState()
+    }
+
+    private fun listenAndSetEmergencyState() {
+        val emergencyRef = database.getReference("emergency")
+        emergencyRef.setValue(false) // Reset on startup
+
+        emergencyRef.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val emergencyStatus = snapshot.getValue(Boolean::class.java) ?: false
+                isEmergencyActive = emergencyStatus
+                updateEmergencyButton()
+            }
+            override fun onCancelled(error: DatabaseError) {
+                Log.e(TAG, "Emergency listener cancelled: ${error.message}")
+            }
+        })
+    }
+
+    private fun toggleEmergency() {
+        database.getReference("emergency").setValue(!isEmergencyActive)
+    }
+
+    private fun updateEmergencyButton() {
+        if (isEmergencyActive) {
+            btnEmergency.text = "🚨 EMERGENCY ACTIVE - TAP TO CANCEL 🚨"
+            btnEmergency.backgroundTintList = ContextCompat.getColorStateList(this, android.R.color.holo_green_dark)
+        } else {
+            btnEmergency.text = "🚨 TRIGGER EMERGENCY 🚨"
+            btnEmergency.backgroundTintList = ContextCompat.getColorStateList(this, android.R.color.holo_red_light)
         }
     }
 
@@ -119,6 +169,7 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private fun showNameWaypointDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_name_waypoint, null)
         val editTextName = dialogView.findViewById<EditText>(R.id.etWaypointName)
+        val cbEmergencyExit = dialogView.findViewById<CheckBox>(R.id.cbEmergencyExit)
 
         AlertDialog.Builder(this)
             .setTitle("Name This Waypoint")
@@ -126,6 +177,7 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             .setView(dialogView)
             .setPositiveButton("Mark") { _, _ ->
                 val name = editTextName.text.toString().trim()
+                isEmergencyExit = cbEmergencyExit.isChecked
                 markCurrentPositionAsWaypoint(name)
             }
             .setNegativeButton("Cancel", null)
@@ -157,35 +209,33 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 "⚠️ Please mark at least 2 named waypoints before saving",
                 Toast.LENGTH_LONG
             ).show()
-            // Allow to continue recording
             pathRecorder.startRecording(etStartPoint.text.toString().trim())
             return
         }
 
-        // Save the floor graph
-        val pathManager = PathManager(this)
-        if (pathManager.saveFloorGraph(graph)) {
-            runOnUiThread {
-                Toast.makeText(
-                    this,
-                    "✅ Floor map saved!\n" +
-                            "Total waypoints: ${graph.getNodeCount()}\n" +
-                            "Named waypoints: ${graph.getNamedWaypointCount()}",
-                    Toast.LENGTH_LONG
-                ).show()
+        Log.d(TAG, "Saving graph with ${graph.getNodeCount()} nodes, ${graph.getNamedWaypointCount()} named")
 
-                // Reset UI
-                tvRecordingStatus.visibility = View.GONE
-                tvWaypointCount.visibility = View.GONE
-                tvPathInfo.visibility = View.GONE
-                btnMarkWaypoint.visibility = View.GONE
-                btnStopRecording.visibility = View.GONE
-                layoutStartPoint.visibility = View.VISIBLE
-                etStartPoint.text.clear()
-                tvInstruction.text = "Floor map saved! Create another or go back."
+        firebasePathManager.saveFloorGraph(graph) { success ->
+            runOnUiThread {
+                if (success) {
+                    Toast.makeText(
+                        this,
+                        "✅ Floor map saved to Firebase!\nTotal waypoints: ${graph.getNodeCount()}",
+                        Toast.LENGTH_LONG
+                    ).show()
+
+                    tvRecordingStatus.visibility = View.GONE
+                    tvWaypointCount.visibility = View.GONE
+                    tvPathInfo.visibility = View.GONE
+                    btnMarkWaypoint.visibility = View.GONE
+                    btnStopRecording.visibility = View.GONE
+                    layoutStartPoint.visibility = View.VISIBLE
+                    etStartPoint.text.clear()
+                    tvInstruction.text = "Floor map saved! Create another or go back."
+                } else {
+                    Toast.makeText(this, "❌ Failed to save map to Firebase", Toast.LENGTH_SHORT).show()
+                }
             }
-        } else {
-            Toast.makeText(this, "❌ Failed to save floor map", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -222,60 +272,44 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     override fun onResume() {
         super.onResume()
-
         if (!hasCameraPermission()) return
-
         if (arSession == null) {
             try {
-                when (ArCoreApk.getInstance().requestInstall(this, !installRequested)) {
-                    ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
-                        installRequested = true
-                        return
-                    }
-                    ArCoreApk.InstallStatus.INSTALLED -> {}
-                    else -> return
+                if (ArCoreApk.getInstance().requestInstall(this, !installRequested) == ArCoreApk.InstallStatus.INSTALL_REQUESTED) {
+                    installRequested = true
+                    return
                 }
-
                 arSession = Session(this)
-                val config = Config(arSession)
-                config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                arSession?.configure(config)
-
+                arSession?.configure(Config(arSession).apply { updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE })
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Failed to create AR session", e)
                 return
             }
         }
-
         try {
             arSession?.resume()
-            surfaceView.onResume()
+            surfaceView.onResume() // FIXED: Removed 'binding.'
         } catch (e: CameraNotAvailableException) {
-            e.printStackTrace()
+            Log.e(TAG, "Camera not available", e)
             arSession = null
         }
     }
 
     override fun onPause() {
         super.onPause()
-        surfaceView.onPause()
+        surfaceView.onPause() // FIXED: Removed 'binding.'
         arSession?.pause()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         arSession?.close()
-        arSession = null
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
-
-        backgroundRenderer = BackgroundRenderer()
-        backgroundRenderer?.createOnGlThread(this)
-
-        renderer = SimpleRenderer()
-        renderer?.createOnGlThread()
+        backgroundRenderer = BackgroundRenderer().apply { createOnGlThread(this@ARActivity) }
+        renderer = SimpleRenderer().apply { createOnGlThread() }
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -285,27 +319,20 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     override fun onDrawFrame(gl: GL10?) {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
-
         val session = arSession ?: return
-
         try {
             session.setCameraTextureName(backgroundRenderer?.getTextureId() ?: 0)
-            val frame: Frame = session.update()
+            val frame = session.update()
             val camera = frame.camera
 
-            // Draw camera background
             backgroundRenderer?.draw(frame)
 
-            if (camera.trackingState != TrackingState.TRACKING) {
-                return
-            }
+            if (camera.trackingState != TrackingState.TRACKING) return
 
-            // Record waypoint if recording
             if (pathRecorder.isCurrentlyRecording()) {
-                // Check if we have a pending named waypoint to mark
                 val pendingName = pendingWaypointName
                 if (pendingName != null) {
-                    val success = pathRecorder.markNamedWaypoint(camera.pose, pendingName)
+                    val success = pathRecorder.markNamedWaypoint(camera.pose, pendingName, isEmergencyExit)
                     runOnUiThread {
                         if (success) {
                             Toast.makeText(this@ARActivity, "✅ '$pendingName' marked!", Toast.LENGTH_SHORT).show()
@@ -314,19 +341,15 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                             Toast.makeText(this@ARActivity, "❌ Name already exists", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    pendingWaypointName = null // Clear the pending name
+                    pendingWaypointName = null
+                    isEmergencyExit = false
                 } else {
-                    // Regular automatic waypoint recording
-                    val recorded = pathRecorder.updatePosition(camera.pose)
-                    if (recorded) {
-                        runOnUiThread {
-                            updateWaypointCount()
-                        }
+                    if (pathRecorder.updatePosition(camera.pose)) {
+                        runOnUiThread { updateWaypointCount() }
                     }
                 }
             }
 
-            // Draw recorded waypoints
             val viewMatrix = FloatArray(16)
             val projectionMatrix = FloatArray(16)
             camera.getViewMatrix(viewMatrix, 0)
@@ -334,13 +357,17 @@ class ARActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
             renderer?.let { r ->
                 pathRecorder.getRecordedPoints().forEach { node ->
-                    val color = if (node.isNamedWaypoint) namedWaypointColor else waypointColor
-                    r.draw(viewMatrix, projectionMatrix, node.position[0], node.position[1], node.position[2], color)
+                    val color = when {
+                        node.isEmergencyExit -> emergencyExitColor
+                        node.isNamedWaypoint -> namedWaypointColor
+                        else -> waypointColor
+                    }
+                    val pos = node.toFloatArray()
+                    r.draw(viewMatrix, projectionMatrix, pos[0], pos[1], pos[2], color)
                 }
             }
-
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in onDrawFrame", e)
         }
     }
 }

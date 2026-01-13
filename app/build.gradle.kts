@@ -1,12 +1,16 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("kotlin-parcelize")
+    id("com.google.gms.google-services")
 }
 
 android {
     namespace = "com.example.aravatarguide"
     compileSdk = 34
-
+    buildFeatures {
+        viewBinding = true
+    }
     defaultConfig {
         applicationId = "com.example.aravatarguide"
         minSdk = 26
@@ -35,23 +39,24 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
+    packagingOptions {
+        resources {
+            excludes += setOf(
+                "META-INF/NOTICE",
+                "META-INF/LICENSE",
+                "META-INF/DEPENDENCIES"
+            )
+        }
+    }
 }
 
 dependencies {
-    // AndroidX Core
+    implementation("com.google.ar:core:1.41.0")
+    implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.11.0")
+    implementation("com.google.firebase:firebase-database-ktx")
+    implementation(platform("com.google.firebase:firebase-bom:32.7.2"))
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-
-    // ARCore
-    implementation("com.google.ar:core:1.44.0")
-
-    // For loading GLB models
-    implementation("de.javagl:obj:0.4.0")
-
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-
 }

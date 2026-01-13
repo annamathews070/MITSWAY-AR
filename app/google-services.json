@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "685941487008",
+    "project_id": "aravatarguide-14692",
+    "storage_bucket": "aravatarguide-14692.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:685941487008:android:a364e8911478a204ef20c5",
+        "android_client_info": {
+          "package_name": "com.example.aravatarguide"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAd-ErEXh0veCrq818SJU-wMkS394LFYUk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

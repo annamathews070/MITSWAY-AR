@@ -1,109 +1,105 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    tools:context=".VisitorActivity">
 
-    <!-- AR Camera View -->
     <android.opengl.GLSurfaceView
         android:id="@+id/surfaceView"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Top Status -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top"
-        android:orientation="vertical"
-        android:background="#80000000"
-        android:padding="16dp">
-
-        <TextView
-            android:id="@+id/tvStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Initializing AR Guide..."
-            android:textColor="@android:color/white"
-            android:textSize="16sp"
-            android:layout_gravity="center" />
-
-        <TextView
-            android:id="@+id/tvDestination"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text=""
-            android:textColor="#00FF00"
-            android:textSize="14sp"
-            android:layout_marginTop="4dp"
-            android:layout_gravity="center"
-            android:visibility="gone" />
-    </LinearLayout>
-
-    <!-- Avatar Status (placeholder for now) -->
-    <TextView
-        android:id="@+id/tvAvatarStatus"
+    <Button
+        android:id="@+id/btnMap"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:background="#CC000000"
-        android:padding="12dp"
-        android:text="🤖 Avatar Ready"
+        android:text="Map"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp" />
+
+    <FrameLayout
+        android:id="@+id/avatarContainer"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp">
+
+        <!-- Avatar will be rendered here -->
+
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="16dp"
         android:textColor="@android:color/white"
+        android:textSize="16sp"
+        android:background="#80000000"
+        android:padding="8dp"/>
+
+    <TextView
+        android:id="@+id/tvDestination"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="56dp"
+        android:textColor="#00FF00"
         android:textSize="18sp"
         android:visibility="gone" />
 
-    <!-- Bottom Control Panel -->
-    <LinearLayout
+    <TextView
+        android:id="@+id/tvDirection"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="150dp"
+        android:gravity="center"
+        android:textColor="#FFD700"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/initialStateContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="#DD000000"
-        android:padding="16dp">
+        android:gravity="center"
+        android:background="#A0000000"
+        android:padding="24dp"
+        android:layout_gravity="center" >
 
-        <!-- Speech Input Display -->
-        <TextView
-            android:id="@+id/tvSpeechInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Tap microphone to ask for directions"
-            android:textColor="#CCCCCC"
-            android:textSize="14sp"
-            android:gravity="center"
-            android:padding="8dp" />
+    <TextView
+        android:id="@+id/tvAvailableLocations"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Loading locations..."
+        android:textColor="@android:color/white"
+        android:textSize="22sp"
+        android:gravity="center"
+        android:layout_marginBottom="24dp" />
 
-        <!-- Microphone Button -->
-        <Button
-            android:id="@+id/btnMicrophone"
-            android:layout_width="80dp"
-            android:layout_height="80dp"
-            android:layout_gravity="center"
-            android:text="🎤"
-            android:textSize="32sp"
-            android:layout_marginTop="8dp" />
+    <TextView
+        android:id="@+id/tvSpeechInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Tap microphone to ask for directions"
+        android:textColor="#CCCCCC"
+        android:textSize="18sp"
+        android:gravity="center"
+        android:padding="8dp" />
 
-        <!-- Available Locations -->
-        <TextView
-            android:id="@+id/tvAvailableLocations"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Loading locations..."
-            android:textColor="@android:color/white"
-            android:textSize="12sp"
-            android:layout_marginTop="8dp"
-            android:gravity="center" />
-
-        <TextView
-            android:id="@+id/tvDirection"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text=""
-            android:textColor="#FFD700"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:visibility="gone" />
+    <Button
+        android:id="@+id/btnMicrophone"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:layout_gravity="center"
+        android:text="🎤"
+        android:textSize="32sp"
+        android:layout_marginTop="8dp" />
     </LinearLayout>
 
 </FrameLayout>

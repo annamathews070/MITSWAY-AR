@@ -55,6 +55,34 @@
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize" />
 
+        <!-- Floor Navigation Activity -->
+        <activity
+            android:name=".FloorNavigationActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize" />
+
+        <!-- Building Activity -->
+        <activity
+            android:name=".BuildingActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize" />
+
+        <!-- Places Activity -->
+        <activity
+            android:name=".PlacesActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize" />
+
+        <!-- Login Activity -->
+        <activity
+            android:name=".LoginActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize" />
+
     </application>
 
 </manifest>

@@ -3,7 +3,6 @@ package com.example.aravatarguide
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
@@ -16,7 +15,7 @@ class MainActivity : AppCompatActivity() {
         val btnVisitor = findViewById<Button>(R.id.btnVisitor)
 
         btnHost.setOnClickListener {
-            val intent = Intent(this, ARActivity::class.java)
+            val intent = Intent(this, LoginActivity::class.java)
             startActivity(intent)
         }
 

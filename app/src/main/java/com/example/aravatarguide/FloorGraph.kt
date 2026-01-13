@@ -1,34 +1,38 @@
 package com.example.aravatarguide
 
+import com.google.firebase.database.Exclude
+import com.google.firebase.database.IgnoreExtraProperties
 import kotlin.math.sqrt
 
+@IgnoreExtraProperties
 data class GraphNode(
-    val id: String,
-    val name: String,
-    val position: FloatArray,
-    val isNamedWaypoint: Boolean = false
+    var id: String = "",
+    var name: String = "",
+    var position: List<Double> = emptyList(),
+    var isNamedWaypoint: Boolean = false,
+    var isEmergencyExit: Boolean = false
 ) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (javaClass != other?.javaClass) return false
-        other as GraphNode
-        return id == other.id
-    }
-
-    override fun hashCode(): Int {
-        return id.hashCode()
+    @Exclude
+    fun toFloatArray(): FloatArray {
+        return floatArrayOf(
+            position.getOrNull(0)?.toFloat() ?: 0f,
+            position.getOrNull(1)?.toFloat() ?: 0f,
+            position.getOrNull(2)?.toFloat() ?: 0f
+        )
     }
 }
 
+@IgnoreExtraProperties
 data class GraphEdge(
-    val from: String,
-    val to: String,
-    val distance: Float
+    var from: String = "",
+    var to: String = "",
+    var distance: Double = 0.0
 )
 
-class FloorGraph {
-    private val nodes = mutableMapOf<String, GraphNode>()
-    private val adjacencyList = mutableMapOf<String, MutableList<GraphEdge>>()
+@IgnoreExtraProperties
+class FloorGraph() {
+    var nodes: MutableMap<String, GraphNode> = mutableMapOf()
+    var adjacencyList: MutableMap<String, MutableList<GraphEdge>> = mutableMapOf()
 
     fun addNode(node: GraphNode) {
         nodes[node.id] = node
@@ -38,79 +42,74 @@ class FloorGraph {
     }
 
     fun addEdge(fromId: String, toId: String, distance: Float) {
-        adjacencyList[fromId]?.add(GraphEdge(fromId, toId, distance))
-        adjacencyList[toId]?.add(GraphEdge(toId, fromId, distance))
+        adjacencyList.getOrPut(fromId) { mutableListOf() }
+            .add(GraphEdge(fromId, toId, distance.toDouble()))
+        adjacencyList.getOrPut(toId) { mutableListOf() }
+            .add(GraphEdge(toId, fromId, distance.toDouble()))
     }
 
+    @Exclude
+    fun getNeighborsOf(node: GraphNode): List<GraphNode> {
+        return adjacencyList[node.id]?.mapNotNull { nodes[it.to] } ?: emptyList()
+    }
+
+    @Exclude
     fun getAllNodes(): List<GraphNode> {
         return nodes.values.toList()
     }
 
+    @Exclude
     fun getNamedWaypoints(): List<GraphNode> {
         return nodes.values.filter { it.isNamedWaypoint }
     }
 
-    fun getNode(id: String): GraphNode? {
-        return nodes[id]
+    @Exclude
+    fun getEmergencyExits(): List<GraphNode> {
+        return nodes.values.filter { it.isEmergencyExit }
     }
 
-    fun getEdges(nodeId: String): List<GraphEdge> {
-        return adjacencyList[nodeId] ?: emptyList()
-    }
-
-    fun calculateDistance(pos1: FloatArray, pos2: FloatArray): Float {
+    // Main distance calculation for Double positions
+    fun calculateDistance(pos1: List<Double>, pos2: List<Double>): Float {
+        if (pos1.size < 3 || pos2.size < 3) return Float.MAX_VALUE
         val dx = pos1[0] - pos2[0]
         val dy = pos1[1] - pos2[1]
         val dz = pos1[2] - pos2[2]
-        return sqrt(dx * dx + dy * dy + dz * dz)
+        return sqrt(dx * dx + dy * dy + dz * dz).toFloat()
     }
 
-    fun findNearestNode(position: FloatArray): GraphNode? {
-        var nearestNode: GraphNode? = null
-        var minDistance = Float.MAX_VALUE
-
-        for (node in nodes.values) {
-            val distance = calculateDistance(position, node.position)
-            if (distance < minDistance) {
-                minDistance = distance
-                nearestNode = node
-            }
-        }
-
-        return nearestNode
+    // Helper for Float to Double comparison
+    fun calculateDistanceFromFloat(pos1: List<Float>, pos2: List<Double>): Float {
+        if (pos1.size < 3 || pos2.size < 3) return Float.MAX_VALUE
+        val dx = pos1[0].toDouble() - pos2[0]
+        val dy = pos1[1].toDouble() - pos2[1]
+        val dz = pos1[2].toDouble() - pos2[2]
+        return sqrt(dx * dx + dy * dy + dz * dz).toFloat()
     }
 
-    fun findNearestNamedWaypoint(position: FloatArray): GraphNode? {
-        var nearestNode: GraphNode? = null
-        var minDistance = Float.MAX_VALUE
-
-        for (node in nodes.values.filter { it.isNamedWaypoint }) {
-            val distance = calculateDistance(position, node.position)
-            if (distance < minDistance) {
-                minDistance = distance
-                nearestNode = node
-            }
-        }
-
-        return nearestNode
+    fun findNearestNode(position: List<Float>): GraphNode? {
+        if (nodes.isEmpty()) return null
+        return nodes.values.minByOrNull { calculateDistanceFromFloat(position, it.position) }
     }
 
-    fun getNodeByName(name: String): GraphNode? {
-        return nodes.values.firstOrNull {
-            it.name.equals(name, ignoreCase = true)
-        }
+    fun findNearestNamedWaypoint(position: List<Float>): GraphNode? {
+        val namedWaypoints = getNamedWaypoints()
+        if (namedWaypoints.isEmpty()) return null
+        return namedWaypoints.minByOrNull { calculateDistanceFromFloat(position, it.position) }
     }
 
+    @Exclude
     fun isEmpty(): Boolean {
         return nodes.isEmpty()
     }
 
+    @Exclude
     fun getNodeCount(): Int {
         return nodes.size
     }
 
+    @Exclude
     fun getNamedWaypointCount(): Int {
-        return nodes.values.count { it.isNamedWaypoint }
+        return getNamedWaypoints().size
     }
 
     fun clear() {
